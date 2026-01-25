@@ -1,53 +1,58 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from llm import answer_for_llm
-from transformers import BitsAndBytesConfig
-import torch
-import torch.nn as nn
+from openai import OpenAI
+from llm import answer_for_llm, answer_router, answer_critery
 
-import os
+import json
+import re
 
-os.environ["HF_HOME"] = "/media/bigdisk/hf_cache"
-os.environ["HUGGINGFACE_HUB_CACHE"] = "/media/bigdisk/hf_cache/hub"
-os.environ["TRANSFORMERS_CACHE"] = "/media/bigdisk/hf_cache/transformers"
-
-# 1. Загружаем модель и токенизатор (локально)
-model_name = "togethercomputer/RedPajama-INCITE-7B-Instruct"  # пример
-cache_dir = "/media/bigdisk/hf_cache/redpajama7b"
-tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+def extract_json(text: str):
+    # убираем ```json и ```
+    text = re.sub(r"```json|```", "", text).strip()
+    return json.loads(text)
 
 
-bnb_config = BitsAndBytesConfig(
-    load_in_8bit=True,
-    llm_int8_enable_fp32_cpu_offload=True
+# 1. Инициализация клиента OpenRouter через OpenAI SDK
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key="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",
 )
 
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    quantization_config=bnb_config,
-    device_map="auto"
+# 2. Формируем prompt через RAG
+query = "Яляется ли зацикливание уровней допустимым критерием прохождения игры?"
+# query = "считается ли игра пройденной если я дошел до зацикливания уровней?"
+# query = "Если в игре получена концовка после которой есть геймплей. Например дполнительный акт или еще сюжет. Можно ли ее зачитывать или нужно проходить дальше"
+
+
+router_prompt = answer_router(query)
+
+# 3. Отправляем запрос модели
+selector = client.chat.completions.create(
+    model="openai/gpt-4o-mini-2024-07-18",
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": router_prompt}]}
+    ]
 )
 
-def generate_answer(prompt):
-    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
 
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=200,
-            do_sample=True,
-            temperature=0.7,
-            pad_token_id=tokenizer.eos_token_id
-        )
-
-    # 🔑 ВАЖНО: декодируем
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return text
+raw = selector.choices[0].message.content
+data = extract_json(raw)
+sections = data["sections"]
 
 
-# 3. Формируем prompt через нашу функцию
-query = "Яляется ли зацикливание уровней допустимым окончанием игры?"
-prompt = answer_for_llm(query)
 
-# 4. Генерация ответа
-output = generate_answer(prompt)
-print(output)
+if any(s in {1,2,3} for s in sections):
+    prompt = answer_critery(query)
+    print("Выбор по критерию")
+else:
+    prompt = answer_for_llm(query)
+    print("Другой выбор")
+
+# 3. Отправляем запрос модели
+completion = client.chat.completions.create(
+    model="openai/gpt-4o-mini-2024-07-18",
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": prompt}]}
+    ]
+)
+
+# 4. Выводим ответ
+print(completion.choices[0].message.content)
