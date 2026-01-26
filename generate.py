@@ -1,8 +1,9 @@
 from openai import OpenAI
 from llm import answer_for_llm, answer_router, answer_critery
-
+from dotenv import load_dotenv
 import json
 import re
+import os
 
 def extract_json(text: str):
     # убираем ```json и ```
@@ -10,11 +11,18 @@ def extract_json(text: str):
     return json.loads(text)
 
 
+from openai import OpenAI
+load_dotenv()  # читает .env
+
 # 1. Инициализация клиента OpenRouter через OpenAI SDK
+
 client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key="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",
+    base_url=os.getenv("OPENROUTER_BASE_URL"),
+    api_key=os.getenv("OPENROUTER_API_KEY"),
 )
+
+
+
 
 # 2. Формируем prompt через RAG
 query = "Яляется ли зацикливание уровней допустимым критерием прохождения игры?"
